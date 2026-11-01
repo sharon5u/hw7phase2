@@ -12,6 +12,10 @@ Run:   .venv/bin/python mosaic_master.py
 import math
 import random
 import time
+import queue
+import threading
+
+from mosaic_scoring import judge_mosaic
 
 import pygame
 
@@ -793,7 +797,19 @@ class Game:
 
     def start_judging(self, tiles):
         self.judge_started = self.now
-        self.verdict = placeholder_score(tiles)   # revealed after JUDGE_SECONDS
+        self.verdict = None
+        self.judge_results = queue.Queue()
+        results = self.judge_results
+        snapshot = render_mosaic(tiles)
+        rgb, size, request = pygame.image.tostring(snapshot, "RGB"), snapshot.get_size(), self.request
+
+        def evaluate():
+            try:
+                results.put((judge_mosaic(rgb, size, request), None))
+            except Exception as exc:
+                results.put((None, str(exc)))
+
+        threading.Thread(target=evaluate, daemon=True).start()
 
     def update_shop(self, dt):
         for c in self.line + self.leaving:
@@ -804,6 +820,20 @@ class Game:
             self.shop_state = "request"
             self.request = self.pick_prompt()
         elif self.shop_state == "judging":
+            if self.verdict is None:
+                try:
+                    self.verdict, error = self.judge_results.get_nowait()
+                except queue.Empty:
+                    if self.now - self.judge_started < 300:
+                        return
+                    error = "Model setup or evaluation timed out"
+                if error:
+                    print("Mosaic scoring unavailable:", error)
+                    self.state = "work"
+                    self.shop_state = "request"
+                    self.trans = None
+                    self.show_toast("Scoring unavailable. Check Terminal, then retry.", 8.0)
+                    return
             if self.now - self.judge_started >= JUDGE_SECONDS:
                 score = self.verdict[0]
                 self.served += 1
@@ -928,6 +958,12 @@ class Game:
             step = -15 if event.mod & pygame.KMOD_SHIFT else 15
             self.rotate_tile(step)
 
+        elif event.type == pygame.KEYDOWN and event.key in (
+                pygame.K_PLUS, pygame.K_EQUALS, pygame.K_KP_PLUS,
+                pygame.K_MINUS, pygame.K_KP_MINUS):
+            step = -2 if event.key in (pygame.K_MINUS, pygame.K_KP_MINUS) else 2
+            self.resize_tile(step)
+
     def work_mouse_down(self, pos):
         if self.btn_finish.hit(pos):
             self.finish_piece()
@@ -958,6 +994,8 @@ class Game:
         self.drag = {"tile": tile, "dx": tile.x - pos[0], "dy": tile.y - pos[1],
                      "from_canvas": from_canvas, "home": (tile.x, tile.y, tile.rot)}
 
+        self.drag["home_size"] = tile.size
+
     def drop(self):
         d, self.drag = self.drag, None
         tile = d["tile"]
@@ -967,6 +1005,7 @@ class Game:
             self.tiles.append(tile)
         elif d["from_canvas"]:
             tile.x, tile.y = d["home"][:2]
+            tile.size = d["home_size"]
             tile.set_rot(d["home"][2])
             self.tiles.append(tile)
             self.show_toast("No room there")
@@ -1001,6 +1040,20 @@ class Game:
             tile.x, tile.y = old[:2]
             tile.set_rot(old[2])
             self.show_toast("No room to rotate")
+
+    def resize_tile(self, step):
+        tile = self.drag["tile"] if self.drag else self.canvas_tile_at(self.mouse)
+        if tile is None:
+            return
+        old = (tile.x, tile.y, tile.size)
+        tile.size = max(4, min(60, tile.size + step))
+        tile.set_rot(tile.rot)
+        if self.drag:
+            return
+        if not self.settle(tile, [o for o in self.tiles if o is not tile]):
+            tile.x, tile.y, tile.size = old
+            tile.set_rot(tile.rot)
+            self.show_toast("No room to resize")
 
     def finish_piece(self):
         if not self.tiles:
