@@ -36,7 +36,7 @@ tweaks to make:
 
 # Updated from phase 2
 ## Primary Changes
-During phase 2, I updated the mosaic game based on the ideas in the original README from phase 1. The two changes are: 1. Added tile resizing function. 2. Improved scoring using free AI model which compares the picture with descriptions of the requested subject
+During phase 2, I updated the mosaic game based on the ideas in the original README from phase 1. The two changes are: 1. Added tile resizing function. 2. Improved scoring using free AI model (CLIP) which compares the picture with descriptions of the requested subject
  
 ## New controls: 
 - **Drag** a tile from the pile onto the canvas. Tiles slide to the nearest open spot instead of overlapping.
